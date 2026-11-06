@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "node scripts/patch-web-push.mjs"
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "next": "16.4.5",
