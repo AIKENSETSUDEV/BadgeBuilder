@@ -1,9 +1,9 @@
-/* Service worker: sets app icon badge from Push even when the PWA is closed.
+/* Service worker: push → notification (+ setAppBadge where supported).
  *
- * Platform notes (Windows):
- * - Microsoft Edge: closed-app / taskbar badges ARE supported.
- * - Google Chrome: setAppBadge from SW runs, but Chrome does not paint the
- *   badge while the PWA window is fully closed (Chromium limitation).
+ * Android Chrome: Badging API is NOT used. An unread notification creates
+ * the home-screen badge automatically while the PWA is closed.
+ * Edge Windows: setAppBadge can show a numeric taskbar badge when closed.
+ * Chrome Windows: setAppBadge only paints while the PWA window is open.
  */
 
 self.addEventListener("install", (event) => {
@@ -21,7 +21,7 @@ self.addEventListener("push", (event) => {
 async function applyBadge(unreadCount) {
   const nav = self.navigator || navigator;
   if (!nav || typeof nav.setAppBadge !== "function") {
-    return { ok: false, reason: "setAppBadge missing in SW" };
+    return { ok: false, reason: "setAppBadge N/A (expected on Android Chrome)" };
   }
 
   try {
@@ -42,7 +42,7 @@ async function applyBadge(unreadCount) {
 async function handlePush(event) {
   let payload = {
     title: "Badge Test",
-    body: "Background badge updated",
+    body: "Background update",
     unreadCount: 5,
     icon: "/icon-192x192.png",
   };
@@ -59,17 +59,16 @@ async function handlePush(event) {
     typeof payload.unreadCount === "number" ? payload.unreadCount : 5;
 
   const badgeResult = await applyBadge(unreadCount);
-  const clientCount = (await self.clients.matchAll({ type: "window", includeUncontrolled: true })).length;
+  const clientCount = (
+    await self.clients.matchAll({ type: "window", includeUncontrolled: true })
+  ).length;
 
-  // Include diagnostics in the toast so you can tell API success vs OS paint.
   await self.registration.showNotification(payload.title || "Badge Test", {
     body: [
-      payload.body || `Badge target ${unreadCount}`,
+      payload.body || `Unread count ${unreadCount}`,
       badgeResult.reason,
-      `openWindows=${clientCount}`,
-      clientCount === 0
-        ? "If using Chrome on Windows, closed-app badges are not painted — use Edge."
-        : "Window still open: badge should show on Chrome and Edge.",
+      `windows=${clientCount}`,
+      "Android: leave this notification unread to see the app-icon badge.",
     ].join(" · "),
     icon: payload.icon || "/icon-192x192.png",
     badge: "/icon-192x192.png",
@@ -83,11 +82,13 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const url = (event.notification.data && event.notification.data.url) || "/";
   event.waitUntil(
-    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
-      for (const client of clientList) {
-        if ("focus" in client) return client.focus();
-      }
-      if (self.clients.openWindow) return self.clients.openWindow(url);
-    })
+    self.clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((clientList) => {
+        for (const client of clientList) {
+          if ("focus" in client) return client.focus();
+        }
+        if (self.clients.openWindow) return self.clients.openWindow(url);
+      })
   );
 });

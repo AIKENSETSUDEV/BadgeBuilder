@@ -1,5 +1,3 @@
-import { mkdir, readFile, writeFile } from "fs/promises";
-import path from "path";
 import webpush from "web-push";
 
 export const TEST_BADGE_COUNT = 5;
@@ -12,12 +10,25 @@ export type StoredPushSubscription = {
   };
 };
 
-const subscriptionPath = path.join(process.cwd(), ".data", "subscription.json");
+export function formatError(error: unknown): string {
+  if (error instanceof Error) {
+    const name = error.name && error.name !== "Error" ? `${error.name}: ` : "";
+    return `${name}${error.message}`;
+  }
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
 
 function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value) {
-    throw new Error(`Missing ${name}. Restart the server after creating .env.local.`);
+    throw new Error(
+      `Missing ${name}. On Vercel: Project → Settings → Environment Variables → add it → Redeploy.`
+    );
   }
   return value;
 }
@@ -30,43 +41,29 @@ export function configureWebPush() {
   );
 }
 
-export async function saveSubscription(sub: StoredPushSubscription) {
-  await mkdir(path.dirname(subscriptionPath), { recursive: true });
-  await writeFile(subscriptionPath, JSON.stringify(sub, null, 2), "utf8");
-}
-
-export async function clearSubscription() {
-  await writeFile(subscriptionPath, "", "utf8").catch(() => undefined);
-  try {
-    const { unlink } = await import("fs/promises");
-    await unlink(subscriptionPath);
-  } catch {
-    // ignore missing file
+export function assertSubscription(
+  sub: StoredPushSubscription | null | undefined
+): StoredPushSubscription {
+  if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) {
+    throw new Error(
+      "Invalid or missing push subscription. Tap “Enable notifications” first."
+    );
   }
+  return sub;
 }
 
-export async function loadSubscription(): Promise<StoredPushSubscription | null> {
-  try {
-    const raw = await readFile(subscriptionPath, "utf8");
-    if (!raw.trim()) return null;
-    return JSON.parse(raw) as StoredPushSubscription;
-  } catch {
-    return null;
-  }
-}
-
-export async function sendBadgePush(badgeCount = TEST_BADGE_COUNT) {
+export async function sendBadgePush(
+  badgeCount: number,
+  subscription: StoredPushSubscription
+) {
   configureWebPush();
-  const subscription = await loadSubscription();
-  if (!subscription) {
-    throw new Error("No push subscription saved. Enable background badge first.");
-  }
+  const sub = assertSubscription(subscription);
 
   await webpush.sendNotification(
-    subscription,
+    sub,
     JSON.stringify({
       title: "Badge Test",
-      body: `Background badge set to ${badgeCount}`,
+      body: `Unread notification (badge target ${badgeCount})`,
       unreadCount: badgeCount,
       icon: "/icon-192x192.png",
     })

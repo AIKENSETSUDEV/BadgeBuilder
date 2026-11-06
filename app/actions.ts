@@ -1,58 +1,56 @@
 "use server";
 
+import { after } from "next/server";
 import {
-  clearSubscription,
-  saveSubscription,
+  assertSubscription,
+  formatError,
   sendBadgePush,
   TEST_BADGE_COUNT,
   type StoredPushSubscription,
 } from "@/lib/push";
 
-export async function subscribeUser(sub: StoredPushSubscription) {
-  if (!sub?.endpoint || !sub.keys?.p256dh || !sub.keys?.auth) {
-    return { ok: false as const, error: "Invalid subscription" };
-  }
-  await saveSubscription(sub);
-  return { ok: true as const };
-}
-
-export async function unsubscribeUser() {
-  await clearSubscription();
-  return { ok: true as const };
-}
-
-export async function sendBackgroundBadge(count = TEST_BADGE_COUNT) {
+export async function sendBackgroundBadge(
+  subscription: StoredPushSubscription,
+  count = TEST_BADGE_COUNT
+) {
   try {
-    await sendBadgePush(count);
+    await sendBadgePush(count, subscription);
     return { ok: true as const, count };
   } catch (error) {
-    return {
-      ok: false as const,
-      error: error instanceof Error ? error.message : "Failed to send push",
-    };
+    return { ok: false as const, error: formatError(error) };
   }
 }
 
-/** Schedules a push after delay so you can close/minimize the app first. */
+/**
+ * Schedules a push after delayMs using Next.js `after()` so it can still fire
+ * on Vercel after the client closes the PWA (unlike a client setTimeout).
+ */
 export async function scheduleBackgroundBadge(
+  subscription: StoredPushSubscription,
   delayMs = 10_000,
   count = TEST_BADGE_COUNT
 ) {
-  const subscriptionOk = await import("@/lib/push").then((m) =>
-    m.loadSubscription()
-  );
-  if (!subscriptionOk) {
-    return {
-      ok: false as const,
-      error: "No push subscription saved. Enable background badge first.",
-    };
-  }
+  try {
+    const sub = assertSubscription(subscription);
 
-  setTimeout(() => {
-    void sendBadgePush(count).catch((err) => {
-      console.error("Scheduled badge push failed:", err);
+    after(async () => {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      try {
+        await sendBadgePush(count, sub);
+      } catch (error) {
+        console.error("Scheduled badge push failed:", formatError(error));
+      }
     });
-  }, delayMs);
 
-  return { ok: true as const, delayMs, count };
+    return { ok: true as const, delayMs, count };
+  } catch (error) {
+    return { ok: false as const, error: formatError(error) };
+  }
+}
+
+export async function checkPushEnv() {
+  return {
+    hasPublicKey: Boolean(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY),
+    hasPrivateKey: Boolean(process.env.VAPID_PRIVATE_KEY),
+  };
 }
